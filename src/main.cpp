@@ -14,8 +14,8 @@
 #include <math.h>
 
 // ─── USER CONFIGURATION ─────────────────────────────────────────────────────
-const char* WIFI_SSID = "YOUR_SSID";
-const char* WIFI_PASS = "YOUR_PASSWORD";
+const char* WIFI_SSID = "WE4ED705";
+const char* WIFI_PASS = "aa0dc89b";
 const char* NODE_ID   = "FL-001";
 const int   LED_PIN   = 15;  // S2 Mini built-in LED
 // ────────────────────────────────────────────────────────────────────────────
