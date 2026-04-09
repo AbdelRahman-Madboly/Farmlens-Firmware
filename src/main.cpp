@@ -1,23 +1,28 @@
 // =============================================================================
 // FarmLens Firmware — Phase 1 Mock Mode
-// Board: LOLIN S2 Mini (ESP32-S2)
+// Board: ESP32 Dev Module (30-pin)
 // Framework: Arduino / PlatformIO
 //
 // Serves mock sensor + AI detection data over WiFi HTTP REST API.
 // Flutter app polls /api/live every 5s.
+//
+// Stage 1 update: mDNS added — app connects via http://farmlens.local
+// regardless of DHCP-assigned IP. No more hardcoded IPs.
 // =============================================================================
 
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ESPmDNS.h>
 #include <ArduinoJson.h>
 #include <math.h>
 
 // ─── USER CONFIGURATION ─────────────────────────────────────────────────────
-const char* WIFI_SSID = "WE4ED705";
-const char* WIFI_PASS = "aa0dc89b";
+const char* WIFI_SSID = "Arwa";
+const char* WIFI_PASS = "ayA@1985";
 const char* NODE_ID   = "FL-001";
-const int   LED_PIN   = 15;  // S2 Mini built-in LED
+const char* MDNS_NAME = "farmlens";   // resolves as http://farmlens.local
+const int   LED_PIN   = 2;            // ESP32 Dev Module built-in LED (was 15 on S2 Mini)
 // ────────────────────────────────────────────────────────────────────────────
 
 WebServer server(80);
@@ -157,6 +162,7 @@ void handleStatus() {
   doc["uptime_s"]     = (unsigned long)(millis() / 1000);
   doc["free_heap"]    = (unsigned long)ESP.getFreeHeap();
   doc["wifi_clients"] = 1;
+  doc["mdns_name"]    = String(MDNS_NAME) + ".local";
   String out;
   serializeJson(doc, out);
   server.send(200, "application/json", out);
@@ -237,10 +243,10 @@ void handlePostSettings() {
     server.send(400, "application/json", "{\"error\":\"invalid json\"}");
     return;
   }
-  if (doc["w1"].is<float>())         g_w1       = doc["w1"].as<float>();
-  if (doc["w2"].is<float>())         g_w2       = doc["w2"].as<float>();
-  if (doc["theta"].is<float>())      g_theta    = doc["theta"].as<float>();
-  if (doc["crop_type"].is<const char*>()) g_cropType = doc["crop_type"].as<String>();
+  if (doc["w1"].is<float>())               g_w1       = doc["w1"].as<float>();
+  if (doc["w2"].is<float>())               g_w2       = doc["w2"].as<float>();
+  if (doc["theta"].is<float>())            g_theta    = doc["theta"].as<float>();
+  if (doc["crop_type"].is<const char*>())  g_cropType = doc["crop_type"].as<String>();
 
   Serial.printf("[FL] Settings updated: w1=%.2f w2=%.2f theta=%.2f crop=%s\n",
     g_w1, g_w2, g_theta, g_cropType.c_str());
@@ -254,8 +260,9 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n[FL] ======================================");
-  Serial.println("[FL] FarmLens Firmware v1.0 — Phase 1 Mock");
-  Serial.printf( "[FL] Node: %s\n", NODE_ID);
+  Serial.println("[FL] FarmLens Firmware v1.1 — Stage 1");
+  Serial.println("[FL] Board: ESP32 Dev Module");
+  Serial.printf( "[FL] Node:  %s\n", NODE_ID);
   Serial.println("[FL] ======================================");
 
   pinMode(LED_PIN, OUTPUT);
@@ -266,7 +273,7 @@ void setup() {
     digitalWrite(LED_PIN, LOW);  delay(300);
   }
 
-  // Connect to WiFi
+  // ── WiFi ─────────────────────────────────────────────────────────────────
   Serial.printf("[FL] Connecting to WiFi: %s\n", WIFI_SSID);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -290,13 +297,17 @@ void setup() {
   Serial.println("[FL] ✓ WiFi connected");
   Serial.printf( "[FL] IP:  %s\n", WiFi.localIP().toString().c_str());
   Serial.printf( "[FL] MAC: %s\n", WiFi.macAddress().c_str());
-  Serial.println("[FL] ┌─────────────────────────────────────┐");
-  Serial.println("[FL] │  Enter this in the app:             │");
-  Serial.printf( "[FL] │  http://%-28s │\n", WiFi.localIP().toString().c_str());
-  Serial.println("[FL] │  Port: 80                           │");
-  Serial.println("[FL] └─────────────────────────────────────┘");
 
-  // Register routes
+  // ── mDNS ─────────────────────────────────────────────────────────────────
+  // Advertise as http://farmlens.local — stable hostname regardless of IP
+  if (MDNS.begin(MDNS_NAME)) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.printf("[FL] ✓ mDNS started → http://%s.local\n", MDNS_NAME);
+  } else {
+    Serial.println("[FL] ✗ mDNS FAILED — use IP address shown above");
+  }
+
+  // ── Routes ───────────────────────────────────────────────────────────────
   server.on("/api/status",   HTTP_GET,     handleStatus);
   server.on("/api/live",     HTTP_GET,     handleLive);
   server.on("/api/logs",     HTTP_GET,     handleLogs);
@@ -310,8 +321,18 @@ void setup() {
 
   server.begin();
   Serial.println("[FL] HTTP server started on port 80");
-  Serial.println("[FL] Generating first data cycle...");
 
+  // ── Connection summary ───────────────────────────────────────────────────
+  Serial.println("[FL] ┌──────────────────────────────────────────────┐");
+  Serial.println("[FL] │  Connect the app using EITHER:               │");
+  Serial.printf( "[FL] │  Hostname : http://%-25s │\n",
+                  (String(MDNS_NAME) + ".local").c_str());
+  Serial.printf( "[FL] │  IP       : http://%-25s │\n",
+                  WiFi.localIP().toString().c_str());
+  Serial.println("[FL] │  Port     : 80                               │");
+  Serial.println("[FL] └──────────────────────────────────────────────┘");
+
+  Serial.println("[FL] Generating first data cycle...");
   // Generate initial data immediately so /api/live is populated on first poll
   updateMockData();
 }
@@ -334,5 +355,12 @@ void loop() {
     digitalWrite(LED_PIN, LOW);  delay(50);
     digitalWrite(LED_PIN, HIGH);
     lastBlink = millis();
+  }
+
+  // Reconnect WiFi if dropped
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[FL] WiFi lost — reconnecting...");
+    WiFi.reconnect();
+    delay(2000);
   }
 }
